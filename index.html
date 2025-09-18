@@ -1,0 +1,592 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Loop2Go — 4-Channel Mixer + Roll FX + Recorder (WAV+MP3)</title>
+<script src="https://cdn.jsdelivr.net/npm/lamejs@1.2.0/lame.min.js"></script>
+<style>
+  :root{
+    --bg:#0b1220; --neon:#20e0ff; --neon2:#9be7ff; --ok:#2be675; --warn:#ffd33d; --blend:#ff9a2b; --muted:#ff3b57;
+    --step-off:#2a3d66; --step-on:#1b5e20; --text:#dff7ff; --glow:#ff3b8d;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;padding:16px;background:radial-gradient(1200px 600px at 30% -10%, #0b274b 0%, #0b1220 42%, #070c17 100%);color:var(--text);font-family:Inter,system-ui,Segoe UI,Roboto,Helvetica,Arial}
+  h1{margin:0 0 8px;font-size:18px;color:var(--neon2);text-align:center}
+  .sub{ text-align:center;font-size:12px;opacity:0.75;margin-bottom:12px }
+  .transport{display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:12px;flex-wrap:wrap}
+  .btn{border:1px solid rgba(32,224,255,0.25);background:transparent;color:var(--neon);padding:8px 12px;border-radius:10px;cursor:pointer;box-shadow:0 0 12px rgba(32,224,255,0.12) inset,0 0 8px rgba(32,224,255,0.08)}
+  .btn:disabled{opacity:0.35;cursor:not-allowed}
+  .btn:active{transform:translateY(1px)}
+  .recording{background:rgba(255,0,0,0.18);color:#ff8080;box-shadow:0 0 12px rgba(255,0,0,0.12) inset}
+  .controls-right{display:flex;align-items:center;gap:8px}
+  .bpm{display:flex;align-items:center;gap:6px}
+  input[type=number]{width:76px;text-align:center;border:1px solid rgba(32,224,255,0.2);background:transparent;color:var(--text);padding:6px 8px;border-radius:8px}
+  .mixer{display:flex;gap:12px;overflow-x:auto;padding-bottom:8px}
+  .strip{flex:0 0 320px;scroll-snap-align:start;background:linear-gradient(180deg,rgba(15,26,49,0.85),rgba(9,16,33,0.85));border:1px solid rgba(32,224,255,0.09);border-radius:14px;padding:12px;box-shadow:0 10px 30px rgba(0,0,0,0.25),inset 0 0 40px rgba(32,224,255,0.05)}
+  .strip h2{margin:0 0 8px;font-size:14px;color:var(--neon2);text-align:center}
+  select{width:100%;background:transparent;color:var(--neon);border:1px solid rgba(32,224,255,0.18);border-radius:10px;padding:8px;margin-bottom:10px}
+  .row{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:6px}
+  label.small{font-size:12px;color:#9bd7ea}
+  .slider{width:100%}
+  .mute{min-width:72px;border:1px solid rgba(255,59,87,0.35);color:#fff;background:rgba(255,59,87,0.08);padding:8px 10px;border-radius:10px;cursor:pointer}
+  .mute.muted{background:var(--muted);border-color:var(--muted)}
+  .grid{display:grid;grid-template-columns:repeat(8,32px);grid-auto-rows:32px;gap:6px;justify-content:center; margin-top:8px}
+  .cell{width:32px;height:32px;border-radius:6px;background:var(--step-off);border:1px solid rgba(32,224,255,0.08);box-shadow:inset 0 -8px 18px rgba(0,0,0,0.35);cursor:pointer;transition:background 60ms linear,opacity 120ms linear, box-shadow 200ms ease}
+  .cell.active{background:var(--step-on)}
+  .cell.playhead{background:var(--warn)}
+  .cell.active.playhead{background:var(--blend)}
+  .cell.beyond{opacity:0.35; filter:grayscale(40%)}
+  .cell.glow{box-shadow:0 0 18px 6px var(--glow), inset 0 0 12px var(--glow) !important;}
+  .led-bar{display:grid;grid-template-columns:repeat(16,1fr);gap:6px;max-width:680px;margin:10px auto}
+  .led{height:10px;border-radius:4px;background:var(--step-off);transition:background 60ms linear}
+  .led.on{background:var(--warn)}
+  .rolls{display:flex;gap:6px;justify-content:center;flex-wrap:wrap;margin-top:8px}
+  .rolls button{padding:6px 8px;border-radius:8px;border:1px solid rgba(32,224,255,0.18);background:transparent;color:var(--neon);cursor:pointer;font-size:13px}
+  .rolls button.latched{background:var(--blend);color:#fff}
+  .loop-select{display:flex;gap:6px;justify-content:center;margin:10px 0}
+  .loop-btn{padding:6px 10px;border-radius:8px;border:1px solid rgba(32,224,255,0.18);background:transparent;color:var(--neon);cursor:pointer}
+  .loop-btn.active{background:var(--neon);color:#001}
+  .hud{position:fixed;top:8px;right:8px;font-size:12px;color:#7ff;text-align:right;opacity:0.9;font-family:monospace}
+  #recIndicator{display:none;color:#ff5a5a;font-weight:700;margin-left:8px;animation:blink 0.9s steps(2,start) infinite}
+  @keyframes blink{0%{opacity:1}50%{opacity:0}100%{opacity:1}}
+  @media (max-width:920px){ .strip{flex:0 0 86vw} .led-bar{grid-template-columns:repeat(16,1fr)} }
+</style>
+</head>
+<body>
+  <h1>Loop2Go — 4-Channel Mixer + Roll FX + Recorder</h1>
+  <div class="sub">Record your live performance, download WAV or MP3, and use loop length + Roll FX for creative polyrhythms.</div>
+
+  <div class="transport">
+    <div style="display:flex;align-items:center;gap:8px">
+      <button id="playBtn" class="btn">Play</button>
+      <button id="stopBtn" class="btn">Stop</button>
+      <button id="recordBtn" class="btn">● Record</button>
+      <span id="recIndicator">● REC</span>
+      <button id="wavBtn" class="btn" disabled>Download WAV</button>
+      <button id="mp3Btn" class="btn" disabled>Download MP3</button>
+    </div>
+
+    <div class="controls-right">
+      <div class="loop-select" id="loopSelect">
+        <button class="loop-btn" data-len="8">8</button>
+        <button class="loop-btn active" data-len="16">16</button>
+        <button class="loop-btn" data-len="32">32</button>
+        <button class="loop-btn" id="customLoop">Custom</button>
+      </div>
+
+      <div class="bpm">
+        <button id="bpmDown" class="btn">−</button>
+        <input id="bpmInput" type="number" min="40" max="240" value="120" />
+        <button id="bpmUp" class="btn">+</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="led-bar" id="ledBar"></div>
+
+  <div class="mixer" id="mixer"></div>
+
+  <div class="hud" id="hud">FPS: --<br>Drift: -- ms</div>
+
+<script>
+/* ================= AUDIO SETUP ================= */
+const AudioCtx = window.AudioContext || window.webkitAudioContext;
+const audioCtx = new AudioCtx();
+const master = audioCtx.createGain(); master.gain.value = 1; master.connect(audioCtx.destination);
+
+function dbToGain(db){ return Math.pow(10, db/20); }
+
+/* ================= MODEL ================= */
+const CHANNEL_DEFS = [
+  {id:'kick',title:'Kick',defaultSample:'kick'},
+  {id:'bass',title:'Bass',defaultSample:'strings'},
+  {id:'snare',title:'Snare',defaultSample:'snare'},
+  {id:'chords',title:'Chords',defaultSample:'violin'}
+];
+const SAMPLE_OPTIONS = [
+  {value:'kick',label:'Kick (Low Sine)'},
+  {value:'snare',label:'Snare (Noise)'},
+  {value:'hihat',label:'Hi-Hat (High Noise)'},
+  {value:'strings',label:'Strings (Sawtooth)'},
+  {value:'violin',label:'Violin (Square)'}
+];
+
+const rollDivs=[null,2,4,8,16];
+const channels = [];
+const mixerEl = document.getElementById('mixer');
+
+/* ================= DUMMY AUDIO (sample generators) ================= */
+function playDummySample(type, time, dest){
+  const dur = 0.25;
+  if(type === 'kick'){
+    const o = audioCtx.createOscillator(); o.type='sine';
+    o.frequency.setValueAtTime(120, time); o.frequency.exponentialRampToValueAtTime(50, time+dur);
+    const g = audioCtx.createGain(); g.gain.setValueAtTime(1, time); g.gain.exponentialRampToValueAtTime(0.001, time+dur);
+    o.connect(g).connect(dest); o.start(time); o.stop(time+dur); return;
+  }
+  if(type === 'snare' || type === 'hihat'){
+    const buf = audioCtx.createBuffer(1, Math.max(1, audioCtx.sampleRate * dur), audioCtx.sampleRate);
+    const d = buf.getChannelData(0); for(let i=0;i<d.length;i++) d[i] = (Math.random()*2 - 1)*(1 - i/d.length);
+    const src = audioCtx.createBufferSource(); src.buffer = buf;
+    const g = audioCtx.createGain(); g.gain.setValueAtTime(0.9, time); g.gain.exponentialRampToValueAtTime(0.001, time+dur);
+    if(type === 'hihat'){ const hp = audioCtx.createBiquadFilter(); hp.type='highpass'; hp.frequency.value=7000; src.connect(hp).connect(g).connect(dest); }
+    else src.connect(g).connect(dest);
+    src.start(time); src.stop(time+dur); return;
+  }
+  if(type === 'strings' || type === 'violin'){
+    const o = audioCtx.createOscillator(); o.type = (type==='strings'?'sawtooth':'square');
+    o.frequency.setValueAtTime(type==='strings'?110:220, time);
+    const g = audioCtx.createGain(); g.gain.setValueAtTime(0.45, time); g.gain.exponentialRampToValueAtTime(0.001, time+dur);
+    o.connect(g).connect(dest); o.start(time); o.stop(time+dur); return;
+  }
+}
+
+/* ================= UI & Channel Factory ================= */
+function createStrip(def){
+  const el = document.createElement('div'); el.className='strip';
+  const title = document.createElement('h2'); title.textContent = def.title; el.appendChild(title);
+
+  // Sample selector
+  const sel = document.createElement('select');
+  SAMPLE_OPTIONS.forEach(opt=>{ const o=document.createElement('option'); o.value=opt.value; o.textContent=opt.label; sel.appendChild(o); });
+  sel.value = def.defaultSample; el.appendChild(sel);
+
+  // Gain slider
+  const row1 = document.createElement('div'); row1.className='row';
+  const gainLabel = document.createElement('label'); gainLabel.className='small'; gainLabel.textContent='Gain';
+  const gainSlider = document.createElement('input'); gainSlider.type='range'; gainSlider.min=-24; gainSlider.max=12; gainSlider.value=0; gainSlider.className='slider';
+  row1.appendChild(gainLabel); row1.appendChild(gainSlider);
+  el.appendChild(row1);
+
+  // Mute
+  const row2 = document.createElement('div'); row2.className='row';
+  const muteBtn = document.createElement('button'); muteBtn.className='mute'; muteBtn.textContent='Mute';
+  row2.appendChild(muteBtn);
+  el.appendChild(row2);
+
+  // Roll FX
+  const rollWrap = document.createElement('div'); rollWrap.className='rolls';
+  rollDivs.forEach((d, idx)=>{
+    const b = document.createElement('button');
+    b.textContent = d?`1/${d}`:'OFF';
+    b.dataset.idx = idx;
+    rollWrap.appendChild(b);
+  });
+  el.appendChild(rollWrap);
+
+  // Grid 8x8 (64 steps serial)
+  const grid = document.createElement('div'); grid.className='grid';
+  const state = {
+    id: def.id, title:def.title, selectedSample: def.defaultSample,
+    gainNode: audioCtx.createGain(), filter: audioCtx.createBiquadFilter(),
+    steps: new Array(64).fill(false), els: [], muted:false, lastGain:1, rollIndex:0, loopLen:16
+  };
+  state.gainNode.gain.value = 1;
+  state.filter.type='lowpass'; state.filter.frequency.value = 20000;
+  state.gainNode.connect(state.filter).connect(master);
+
+  for(let r=0;r<8;r++){
+    for(let c=0;c<8;c++){
+      const idx = r*8 + c;
+      const cell = document.createElement('div'); cell.className='cell';
+      cell.dataset.idx = idx;
+      cell.addEventListener('click', ()=> {
+        state.steps[idx] = !state.steps[idx];
+        cell.classList.toggle('active', state.steps[idx]);
+      });
+      grid.appendChild(cell); state.els.push(cell);
+    }
+  }
+
+  el.appendChild(grid);
+  mixerEl.appendChild(el);
+
+  // Hookups
+  sel.addEventListener('change', e => state.selectedSample = e.target.value);
+  gainSlider.addEventListener('input', e => {
+    const db = parseFloat(e.target.value);
+    const g = dbToGain(db);
+    state.lastGain = g;
+    if(!state.muted) state.gainNode.gain.setValueAtTime(g, audioCtx.currentTime);
+  });
+  muteBtn.addEventListener('click', ()=>{
+    state.muted = !state.muted;
+    if(state.muted){ state.gainNode.gain.setValueAtTime(0, audioCtx.currentTime); muteBtn.classList.add('muted'); muteBtn.textContent='Muted'; }
+    else { state.gainNode.gain.setValueAtTime(state.lastGain || 1, audioCtx.currentTime); muteBtn.classList.remove('muted'); muteBtn.textContent='Mute'; }
+  });
+
+  // Roll button logic (double-tap to latch, single tap = momentary)
+  Array.from(rollWrap.children).forEach(btn=>{
+    let holdTimer = null;
+    let lastTap = 0;
+    btn.addEventListener('pointerdown', (ev)=>{
+      const now = performance.now();
+      if(now - lastTap < 350){ // double tap -> toggle latch
+        const idx = parseInt(btn.dataset.idx,10);
+        if(state.rollIndex === idx){ state.rollIndex = 0; // unlatch
+          Array.from(rollWrap.children).forEach(b=>b.classList.remove('latched'));
+        } else { state.rollIndex = idx; Array.from(rollWrap.children).forEach(b=>b.classList.remove('latched')); btn.classList.add('latched'); }
+        lastTap = 0;
+        return;
+      }
+      lastTap = now;
+
+      // momentary: apply temporary roll by setting rollIndex until pointerup
+      const idx = parseInt(btn.dataset.idx,10);
+      if(idx === 0){ // OFF button - mute momentarily
+        // momentary mute
+        channels.forEach(ch => ch.muted ? null : ch.gainNode.gain.setValueAtTime(0, audioCtx.currentTime));
+        holdTimer = 'off'; // marker
+      } else {
+        // momentary set roll
+        state._tempRoll = state.rollIndex; state.rollIndex = idx; btn.classList.add('latched');
+        holdTimer = 'roll';
+      }
+    });
+    btn.addEventListener('pointerup', (ev)=>{
+      // release momentary
+      if(holdTimer === 'off'){
+        // restore gains for channels that aren't mute latched (rough approach)
+        channels.forEach(ch=> ch.muted ? null : ch.gainNode.gain.setValueAtTime(ch.lastGain || 1, audioCtx.currentTime));
+      } else if(holdTimer === 'roll'){
+        // if not latched (double-tap), restore
+        if(!btn.classList.contains('latched')){
+          state.rollIndex = state._tempRoll || 0;
+        }
+        // remove temporary visual unless latched
+        if(!btn.classList.contains('latched')) btn.classList.remove('latched');
+      }
+      holdTimer = null;
+    });
+  });
+
+  channels.push(state);
+}
+
+/* create all channels */
+CHANNEL_DEFS.forEach(createStrip);
+
+/* ================= LOOP LENGTH (LEDs) ================= */
+let loopLength = 16;
+const ledBar = document.getElementById('ledBar');
+function buildLedBar(){
+  ledBar.innerHTML = '';
+  for(let i=0;i<loopLength;i++){
+    const d = document.createElement('div'); d.className='led'; d.dataset.idx=i;
+    ledBar.appendChild(d);
+  }
+}
+buildLedBar();
+
+document.getElementById('loopSelect').addEventListener('click', e=>{
+  if(!e.target.classList.contains('loop-btn')) return;
+  document.querySelectorAll('.loop-btn').forEach(b=>b.classList.remove('active'));
+  e.target.classList.add('active');
+  if(e.target.id === 'customLoop'){
+    const v = parseInt(prompt('Custom loop length (4–64):', loopLength),10);
+    if(!isNaN(v) && v>=4 && v<=64) loopLength = v;
+  } else {
+    loopLength = parseInt(e.target.dataset.len,10);
+  }
+  buildLedBar();
+});
+
+/* ================= SCHEDULER (rAF lookahead) ================= */
+let playing = false;
+let bpm = 120;
+let nextNoteTime = 0;
+let schedulerTimer = null;
+let globalStep = 0;
+const lookahead = 0.12;
+
+function secPerStep(bpmVal){ return (60 / bpmVal) / 2; } // 8th note = step
+
+function schedulerTick(){
+  const now = audioCtx.currentTime;
+  while(nextNoteTime < now + lookahead){
+    // schedule events
+    channels.forEach(ch=>{
+      const localIndex = globalStep % ch.loopLen;
+      // compute roll division for this channel
+      const rollIdx = ch.rollIndex || 0;
+      const rollDiv = rollDivs[rollIdx] || 1;
+      // if roll active, we subdivide the stepDur - but for simplicity we will trigger same sample more often quickly
+      if(ch.steps[localIndex] && !ch.muted){
+        // simple implementation: call sample once
+        playDummySample(ch.selectedSample, nextNoteTime, ch.gainNode);
+        // visual glow
+        const el = ch.els[localIndex]; if(el){ setTimeout(()=>el.classList.add('glow'),0); setTimeout(()=>el.classList.remove('glow'),120); }
+      }
+    });
+
+    // advance
+    const sps = secPerStep(bpm);
+    nextNoteTime += sps;
+    globalStep = (globalStep + 1) % 1024;
+  }
+  // update playhead visuals (compute current serial step)
+  requestAnimationFrame(updatePlayheadVisual);
+  if(playing) requestAnimationFrame(schedulerTick);
+}
+
+let startTime = 0;
+function startTransport(){
+  if(audioCtx.state === 'suspended') audioCtx.resume();
+  if(playing) return;
+  playing = true;
+  bpm = parseFloat(document.getElementById('bpmInput').value) || 120;
+  startTime = audioCtx.currentTime + 0.02;
+  nextNoteTime = startTime;
+  globalStep = 0;
+  requestAnimationFrame(schedulerTick);
+}
+
+function stopTransport(){
+  playing = false;
+}
+
+/* playhead visual update (uses audioCtx timebase) */
+function updatePlayheadVisual(){
+  if(!playing) return;
+  const sps = secPerStep(parseFloat(document.getElementById('bpmInput').value) || 120);
+  const elapsed = audioCtx.currentTime - startTime;
+  let floatStep = Math.floor(elapsed / sps);
+  if(loopLength>0) floatStep = floatStep % loopLength;
+  const visual = floatStep;
+  // update LED bar
+  document.querySelectorAll('#ledBar .led').forEach((led,i)=> led.classList.toggle('on', i===visual));
+  // update per-channel grid playhead (single cell)
+  channels.forEach(ch=>{
+    ch.els.forEach((cell, idx)=> cell.classList.toggle('playhead', idx===visual));
+  });
+}
+
+/* UI transport handlers */
+document.getElementById('playBtn').addEventListener('click', ()=> startTransport());
+document.getElementById('stopBtn').addEventListener('click', ()=> stopTransport());
+document.getElementById('bpmUp').addEventListener('click', ()=> { document.getElementById('bpmInput').value = Math.min(240, parseInt(document.getElementById('bpmInput').value||120)+1); });
+document.getElementById('bpmDown').addEventListener('click', ()=> { document.getElementById('bpmInput').value = Math.max(40, parseInt(document.getElementById('bpmInput').value||120)-1); });
+document.getElementById('bpmInput').addEventListener('change', e => bpm = parseFloat(e.target.value) || 120);
+
+/* ================= RECORDING (MediaRecorder -> decode -> WAV/MP3) ================= */
+const recordBtn = document.getElementById('recordBtn');
+const recIndicator = document.getElementById('recIndicator');
+const wavBtn = document.getElementById('wavBtn');
+const mp3Btn = document.getElementById('mp3Btn');
+
+let mediaRecorder = null;
+let recordedChunks = [];
+let decodedBuffer = null;
+let mp3Blob = null;
+
+recordBtn.addEventListener('click', async ()=>{
+  if(audioCtx.state === 'suspended') await audioCtx.resume();
+
+  if(!mediaRecorder || mediaRecorder.state === 'inactive'){
+    // start recording master output
+    const dest = audioCtx.createMediaStreamDestination();
+    master.connect(dest);
+    mediaRecorder = new MediaRecorder(dest.stream);
+    recordedChunks = [];
+    mediaRecorder.ondataavailable = (e)=> { if(e.data.size>0) recordedChunks.push(e.data); };
+    mediaRecorder.start();
+    recIndicator.style.display = 'inline';
+    recordBtn.classList.add('recording');
+    recordBtn.textContent = '■ Stop';
+  } else if(mediaRecorder.state === 'recording'){
+    // stop, then process
+    mediaRecorder.onstop = async ()=>{
+      recIndicator.style.display = 'none';
+      recordBtn.classList.remove('recording');
+      recordBtn.textContent = '● Record';
+
+      // assemble blob and decode
+      const rawBlob = new Blob(recordedChunks);
+      try {
+        const arrayBuffer = await rawBlob.arrayBuffer();
+        decodedBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+      } catch(err){
+        console.error('Decoding recorded data failed:', err);
+        alert('Recording decoding failed in this browser. Try a different browser.');
+        return;
+      }
+
+      // enable WAV button and prepare WAV blob
+      const wav = audioBufferToWav(decodedBuffer);
+      wavBtn.disabled = false;
+      wavBtn.dataset.blobUrl = URL.createObjectURL(wav);
+
+      // start MP3 conversion in background
+      mp3Btn.disabled = true;
+      convertAudioBufferToMp3(decodedBuffer).then(mb=>{
+        mp3Blob = mb;
+        mp3Btn.disabled = false;
+      }).catch(err=>{
+        console.error('MP3 encode error:', err);
+        mp3Btn.disabled = true;
+      });
+    };
+    mediaRecorder.stop();
+  }
+});
+
+// WAV download (generate actual WAV from decodedBuffer)
+wavBtn.addEventListener('click', ()=>{
+  if(!decodedBuffer) return;
+  // Use stored blob URL if exists
+  if(wavBtn.dataset.blobUrl){
+    const a = document.createElement('a');
+    a.href = wavBtn.dataset.blobUrl;
+    a.download = 'loop2go_recording.wav';
+    a.click();
+  } else {
+    const wav = audioBufferToWav(decodedBuffer);
+    const url = URL.createObjectURL(wav);
+    const a = document.createElement('a'); a.href=url; a.download='loop2go_recording.wav'; a.click();
+    URL.revokeObjectURL(url);
+  }
+});
+
+// MP3 download
+mp3Btn.addEventListener('click', ()=>{
+  if(!mp3Blob) return;
+  const url = URL.createObjectURL(mp3Blob);
+  const a = document.createElement('a'); a.href=url; a.download='loop2go_recording.mp3'; a.click();
+  URL.revokeObjectURL(url);
+});
+
+/* helper: convert AudioBuffer -> WAV Blob */
+function audioBufferToWav(buffer, opt) {
+  opt = opt || {};
+  const numChannels = buffer.numberOfChannels;
+  const sampleRate = buffer.sampleRate;
+  const format = opt.float32 ? 3 : 1; // 3 = IEEE float, 1 = PCM
+  const bitDepth = format === 3 ? 32 : 16;
+
+  let bytesPerSample = bitDepth / 8;
+  let blockAlign = numChannels * bytesPerSample;
+  let bufferLength = buffer.length * blockAlign;
+  let wavBuffer = new ArrayBuffer(44 + bufferLength);
+  let view = new DataView(wavBuffer);
+  /* RIFF identifier */
+  writeString(view, 0, 'RIFF');
+  /* file length */
+  view.setUint32(4, 36 + bufferLength, true);
+  /* RIFF type */
+  writeString(view, 8, 'WAVE');
+  /* format chunk identifier */
+  writeString(view, 12, 'fmt ');
+  /* format chunk length */
+  view.setUint32(16, 16, true);
+  /* sample format (raw) */
+  view.setUint16(20, format, true);
+  /* channel count */
+  view.setUint16(22, numChannels, true);
+  /* sample rate */
+  view.setUint32(24, sampleRate, true);
+  /* byte rate (sample rate * block align) */
+  view.setUint32(28, sampleRate * blockAlign, true);
+  /* block align (channel count * bytes per sample) */
+  view.setUint16(32, blockAlign, true);
+  /* bits per sample */
+  view.setUint16(34, bitDepth, true);
+  /* data chunk identifier */
+  writeString(view, 36, 'data');
+  /* data chunk length */
+  view.setUint32(40, bufferLength, true);
+
+  // write interleaved data
+  let offset = 44;
+  if(format === 1){
+    // PCM 16
+    for (let i = 0; i < buffer.length; i++){
+      for (let ch = 0; ch < numChannels; ch++){
+        const sample = buffer.getChannelData(ch)[i];
+        let s = Math.max(-1, Math.min(1, sample));
+        view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+        offset += 2;
+      }
+    }
+  } else {
+    // float32
+    for (let i = 0; i < buffer.length; i++){
+      for (let ch = 0; ch < numChannels; ch++){
+        view.setFloat32(offset, buffer.getChannelData(ch)[i], true);
+        offset += 4;
+      }
+    }
+  }
+
+  return new Blob([view], { type: 'audio/wav' });
+
+  function writeString(view, offset, string){
+    for (let i = 0; i < string.length; i++){
+      view.setUint8(offset + i, string.charCodeAt(i));
+    }
+  }
+}
+
+/* helper: MP3 encode via lamejs from AudioBuffer */
+async function convertAudioBufferToMp3(audioBuffer){
+  // We'll encode as stereo if the buffer is stereo
+  const numChannels = audioBuffer.numberOfChannels;
+  const sampleRate = audioBuffer.sampleRate;
+  const mp3encoder = new lamejs.Mp3Encoder(numChannels, sampleRate, 128);
+  const left = audioBuffer.getChannelData(0);
+  const right = numChannels > 1 ? audioBuffer.getChannelData(1) : left;
+  const samplesPerFrame = 1152;
+  let mp3Data = [];
+
+  for(let i = 0; i < left.length; i += samplesPerFrame){
+    const leftChunk = left.subarray(i, i + samplesPerFrame);
+    const rightChunk = right.subarray(i, i + samplesPerFrame);
+
+    // convert to 16-bit PCM
+    const left16 = floatTo16BitPCM(leftChunk);
+    if(numChannels === 1){
+      const mp3buf = mp3encoder.encodeBuffer(left16);
+      if(mp3buf.length > 0) mp3Data.push(mp3buf);
+    } else {
+      const right16 = floatTo16BitPCM(rightChunk);
+      const mp3buf = mp3encoder.encodeBuffer(left16, right16);
+      if(mp3buf.length > 0) mp3Data.push(mp3buf);
+    }
+  }
+  const end = mp3encoder.flush();
+  if(end.length > 0) mp3Data.push(end);
+  return new Blob(mp3Data, { type: 'audio/mp3' });
+
+  function floatTo16BitPCM(float32Array){
+    const out = new Int16Array(float32Array.length);
+    for(let i=0;i<float32Array.length;i++){
+      let s = Math.max(-1, Math.min(1, float32Array[i]));
+      out[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+    }
+    return out;
+  }
+}
+
+/* ================= PERFORMANCE HUD (FPS + drift) ================= */
+const hud = document.getElementById('hud');
+let lastFpsUpdate = performance.now(), frameCount = 0;
+function fpsLoop(now){
+  frameCount++;
+  if(now - lastFpsUpdate > 1000){
+    const fps = Math.round((frameCount * 1000) / (now - lastFpsUpdate));
+    const driftMs = ((audioCtx.currentTime - nextNoteTime)*1000).toFixed(2);
+    hud.innerHTML = `FPS: ${fps}<br>Drift: ${driftMs} ms`;
+    frameCount = 0; lastFpsUpdate = now;
+  }
+  requestAnimationFrame(fpsLoop);
+}
+requestAnimationFrame(fpsLoop);
+
+/* ================= INIT defaults ================= */
+document.getElementById('bpmInput').value = 120;
+
+/* Create LEDs and initial channels layout */
+buildLedBar();
+</script>
+</body>
+</html>
